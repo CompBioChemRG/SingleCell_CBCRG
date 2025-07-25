@@ -1,0 +1,65 @@
+##########load R packages############
+library(Seurat)
+library(SeuratDisk)
+library(SingleCellExperiment)
+library(reticulate)
+library(SingleR)
+library(dplyr)
+library(KEGG.db)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(celldex)
+library(tidyverse)
+library(Matrix)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(SCpubr)
+library(cowplot)
+library(patchwork)
+########load organs datasets##########
+Organ_1 <- Read10X(data.dir = "~/xx/xx/xx")
+Organ_1 <- CreateSeuratObject(counts = Organ_1, min.cells = 3, min.features = 200)
+Organ_1[["percent.mt"]] <- PercentageFeatureSet(Organ_1, pattern = "^MT-")
+Organ_1 <- subset(Organ_1, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+Organ_1 <- NormalizeData(Organ_1, normalization.method = "LogNormalize", scale.factor = 10000)
+Organ_1 <- FindVariableFeatures(Organ_1, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(Organ_1)
+Organ_1 <- ScaleData(Organ_1, features = all.genes)
+Organ_1 <- RunPCA(Organ_1, features = VariableFeatures(object = Organ_1))
+Organ_1 <- JackStraw(Organ_1, num.replicate = 100)
+Organ_1 <- ScoreJackStraw(Organ_1, dims = 1:20)
+Organ_1 <- FindNeighbors(Organ_1, dims = 1:10)
+Organ_1 <- FindClusters(Organ_1, resolution = 0.5)
+Organ_1 <- RunTSNE(Organ_1, dims = 1:10)
+Organ_1 <- RunUMAP(Organ_1, dims = 1:10)###Procedure for each organ dataset employed###
+########Merge organs datasets##########
+Organ_1@meta.data[, "protocol"] <- "xxx"###Step for each organ dataset
+Merge <- merge(Organ_1, y = c("x", "y"..), add.cell.ids = c("xx", "yy"), project = "xxx")
+conditions.list <- SplitObject(Merge, split.by = "protocol")
+reference.list <- conditions.list[c("xxx", "yyy")]
+anchors <- FindIntegrationAnchors(object.list = reference.list, dims = 1:30)
+organs.integrated <- IntegrateData(anchorset = anchors, dims = 1:30)
+DefaultAssay(organs.integrated) <- "RNA"
+organs.integrated <- FindVariableFeatures(organs.integrated, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(organs.integrated)
+organs.integrated <- ScaleData(organs.integrated, features = all.genes)
+organs.integrated <- RunPCA(organs.integrated, npcs = 30, verbose = FALSE)
+organs.integrated <- RunUMAP(organs.integrated, dims = 1:30, reduction = "pca")
+organs.integrated <- RunTSNE(organs.integrated, dims = 1:30, reduction = "pca")
+organs.integrated <- FindNeighbors(organs.integrated, reduction = "pca", dims = 1:30)
+organs.integrated <- FindClusters(organs.integrated, resolution = 0.5)
+########Cell type annotation##########
+hpca.se <- HumanPrimaryCellAtlasData()
+for_singleR_input <- GetAssayData(organs.integrated)
+Organs_SR <- SingleR(test = for_singleR_input, ref = hpca.se, label = hpca.se$label.main)
+summary(is.na(Organs_SR$pruned.labels))
+organs.integrated[["SingleR.labels"]] <- Organs_SR$labels
+organs.integrated$SingleR.pruned.calls <- Organs_SR$pruned.labels
+organs.integrated$SingleR.calls <- Organs_SR$labels
+organs.integrated@meta.data[["SingleR.calls"]]
+########Enrichment analysis##########
+sample_gene <- xxx$`Gene Names`
+gene.df <- bitr(sample_gene, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+sample_test <- enrichGO(gene.df$ENTREZID, OrgDb=org.Hs.eg.db, pvalueCutoff=1, qvalueCutoff=1, ont = "all")
+dotplot(sample_test, showCategory=10)
